@@ -15,13 +15,14 @@ uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
 if uploaded_file is not None:
     with st.spinner("Processing PDF..."):
-        file_path = save_uploaded_file(uploaded_file)
-        docs = load_pdf(file_path)
-        chunks = split_documents(docs)
-        embedding_model = get_embedding_model()
-        vectordb = build_vector_store(chunks, embedding_model)
-        retriever = get_retriever(vectordb)
-        llm = get_llm()
+        file_path = save_uploaded_file(uploaded_file)   #file handler module
+        docs = load_pdf(file_path) #loaders module
+        chunks = split_documents(docs) #splitters module
+        embedding_model = get_embedding_model() #embedding module
+        vectordb = build_vector_store(chunks, embedding_model) #vectordb module
+        retriever = get_retriever(vectordb) #retrevier module
+        llm = get_llm() #llm module
+        
 
         st.session_state["retriever"] = retriever
         st.session_state["llm"] = llm
