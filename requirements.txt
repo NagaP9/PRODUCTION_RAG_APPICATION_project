@@ -1,13 +1,16 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi
-uvicorn
-pydantic
+uvicorn[standard]
 pydantic-settings
+python-multipart
 langchain
 langchain-community
 langchain-text-splitters
 openai
 chromadb
 sentence-transformers
+torch==2.3.1+cpu
 pypdf
 docx2txt
-python-multipart
+python-dotenv
