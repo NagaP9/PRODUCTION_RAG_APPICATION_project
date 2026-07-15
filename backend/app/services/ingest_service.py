@@ -9,7 +9,7 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2t
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from backend.app.core.config import settings
-from backend.app.services.rag_service import vectorstore
+from backend.app.services.rag_service import get_vectorstore
 
 logger = logging.getLogger("lumen-backend")
 
@@ -158,7 +158,7 @@ def _extract_chunk_keywords(text: str) -> List[str]:
     stopwords = {
         "the", "and", "for", "with", "that", "this", "from", "into", "have", "has",
         "will", "your", "what", "when", "where", "which", "their", "about", "there",
-        "they", "them", "than", "then", "been", "being", "were", "also", "such"
+        "they", "them", "than", "then", "been", "being", "were", "also", "such",
     }
 
     seen = []
@@ -250,6 +250,8 @@ def _prepare_chunks_for_storage(split_docs: List) -> List[str]:
 
 
 def _delete_existing_file_chunks(session_id: str, file_name: str) -> None:
+    vectorstore = get_vectorstore()
+
     try:
         existing = vectorstore.get(
             where={
@@ -262,9 +264,19 @@ def _delete_existing_file_chunks(session_id: str, file_name: str) -> None:
         ids = existing.get("ids", []) if existing else []
         if ids:
             vectorstore.delete(ids=ids)
-            logger.info("Deleted %s existing chunks for session=%s file=%s", len(ids), session_id, file_name)
+            logger.info(
+                "Deleted %s existing chunks for session=%s file=%s",
+                len(ids),
+                session_id,
+                file_name,
+            )
     except Exception as exc:
-        logger.warning("Could not delete existing chunks for session=%s file=%s: %s", session_id, file_name, exc)
+        logger.warning(
+            "Could not delete existing chunks for session=%s file=%s: %s",
+            session_id,
+            file_name,
+            exc,
+        )
 
 
 def ingest_document_file(
@@ -283,7 +295,10 @@ def ingest_document_file(
     resolved_document_id = document_id or uuid.uuid4().hex
     file_hash = _hash_file(normalized_path)
 
-    _delete_existing_file_chunks(session_id=session_id, file_name=normalized_path.name)
+    _delete_existing_file_chunks(
+        session_id=session_id,
+        file_name=normalized_path.name,
+    )
 
     try:
         docs = _load_document(str(normalized_path))
@@ -313,6 +328,8 @@ def ingest_document_file(
         raise ValueError(f"No text chunks could be created from {normalized_path.name}")
 
     ids = _prepare_chunks_for_storage(split_docs)
+
+    vectorstore = get_vectorstore()
     vectorstore.add_documents(split_docs, ids=ids)
 
     logger.info(

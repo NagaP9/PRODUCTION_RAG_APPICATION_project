@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, Tuple
+from functools import lru_cache
 import logging
 import re
 
@@ -10,24 +11,38 @@ from backend.app.core.config import settings
 
 logger = logging.getLogger("lumen-backend")
 
-embeddings = HuggingFaceEmbeddings(
-    model_name=settings.embedding_model_name
-)
 
-vectorstore = Chroma(
-    collection_name=settings.chroma_collection_name,
-    persist_directory=settings.chroma_persist_directory,
-    embedding_function=embeddings,
-)
+@lru_cache(maxsize=1)
+def get_embeddings() -> HuggingFaceEmbeddings:
+    logger.info("Initializing embedding model: %s", settings.embedding_model_name)
+    return HuggingFaceEmbeddings(
+        model_name=settings.embedding_model_name
+    )
 
-client = (
-    OpenAI(
+
+@lru_cache(maxsize=1)
+def get_vectorstore() -> Chroma:
+    logger.info(
+        "Initializing Chroma vectorstore: collection=%s persist_dir=%s",
+        settings.chroma_collection_name,
+        settings.chroma_persist_directory,
+    )
+    return Chroma(
+        collection_name=settings.chroma_collection_name,
+        persist_directory=settings.chroma_persist_directory,
+        embedding_function=get_embeddings(),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_client() -> Optional[OpenAI]:
+    if not settings.groq_api_key:
+        return None
+
+    return OpenAI(
         api_key=settings.groq_api_key,
         base_url=settings.groq_base_url,
     )
-    if settings.groq_api_key
-    else None
-)
 
 
 def _clean_filters(filters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -343,6 +358,7 @@ def _retrieve_documents(
     document_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
 ) -> List[Tuple[Any, float]]:
+    vectorstore = get_vectorstore()
     intent = _infer_query_intent(query)
     top_k = _precision_top_k(intent)
     candidate_k = _candidate_k(intent)
@@ -507,6 +523,7 @@ def _generate_answer(query: str, docs: List[Any]) -> str:
     if not docs:
         return "I could not find relevant information in the uploaded content."
 
+    client = get_client()
     if client is None:
         return "I found relevant document content, but no Groq API key is configured."
 
