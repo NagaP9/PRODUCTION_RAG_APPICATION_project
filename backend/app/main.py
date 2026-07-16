@@ -9,7 +9,7 @@ from backend.app.services.rag_service import get_embeddings, get_vectorstore
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     embeddings = get_embeddings()
-    vectorstore = get_vectorstore(embeddings)
+    vectorstore = get_vectorstore()
 
     app.state.embeddings = embeddings
     app.state.vectorstore = vectorstore
