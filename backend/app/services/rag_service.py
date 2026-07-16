@@ -23,7 +23,7 @@ def get_embeddings() -> HuggingFaceEmbeddings:
 
 
 @lru_cache(maxsize=1)
-def get_vectorstore(embeddings: Optional[HuggingFaceEmbeddings] = None) -> Chroma:
+def get_vectorstore() -> Chroma:
     logger.info(
         "Initializing Chroma vectorstore: collection=%s persist_dir=%s",
         settings.chroma_collection_name,
@@ -32,7 +32,7 @@ def get_vectorstore(embeddings: Optional[HuggingFaceEmbeddings] = None) -> Chrom
     return Chroma(
         collection_name=settings.chroma_collection_name,
         persist_directory=settings.chroma_persist_directory,
-        embedding_function=embeddings or get_embeddings(),
+        embedding_function=get_embeddings(),
     )
 
 
@@ -85,7 +85,7 @@ def _mask_sensitive_text(text: str) -> str:
     return masked
 
 
-def _shorten(text: str, limit: int = 280) -> str:
+def _shorten(text: str, limit: int = 220) -> str:
     cleaned = _normalize_text(text)
     if len(cleaned) <= limit:
         return cleaned
@@ -586,6 +586,17 @@ Instructions:
         return "I found relevant document content, but I could not generate a final answer at the moment."
 
 
+def _public_source_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "file_name": metadata.get("file_name"),
+        "document_id": metadata.get("document_id"),
+        "page": metadata.get("page"),
+        "section": metadata.get("section"),
+        "heading": metadata.get("heading"),
+        "score": metadata.get("score"),
+    }
+
+
 def _build_sources(results: List[Tuple[Any, float]]) -> List[Dict[str, Any]]:
     sources: List[Dict[str, Any]] = []
 
@@ -595,8 +606,8 @@ def _build_sources(results: List[Tuple[Any, float]]) -> List[Dict[str, Any]]:
 
         sources.append(
             {
-                "content": _shorten(_mask_sensitive_text(doc.page_content)),
-                "metadata": metadata,
+                "content": _shorten(_mask_sensitive_text(doc.page_content), limit=220),
+                "metadata": _public_source_metadata(metadata),
             }
         )
 

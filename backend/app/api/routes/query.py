@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from backend.app.schemas.query import QueryRequest, QueryResponse
 from backend.app.services.rag_service import answer_question
 
+
 router = APIRouter(prefix="/api", tags=["query"])
 
 
