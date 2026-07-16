@@ -7,13 +7,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.core.config import settings
 from backend.app.api.routes import query, ingest, health, upload
 
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 
 app = FastAPI(title=settings.app_name)
+
+
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "RAG backend is running"}
+
 
 Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
 Path(settings.chroma_persist_directory).mkdir(parents=True, exist_ok=True)
