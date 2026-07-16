@@ -12,7 +12,7 @@ langchain-chroma
 openai
 chromadb
 sentence-transformers
-torch==2.3.0+cpu
+torch==2.13.0+cpu
 pypdf
 docx2txt
 python-dotenv
