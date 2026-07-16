@@ -1,27 +1,25 @@
+import logging
 import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 
 from backend.app.core.config import settings
 from backend.app.services.ingest_service import ingest_document_file
+
+logger = logging.getLogger("lumen-backend")
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
 
 def _session_dir(session_id: str) -> Path:
-    # Keep each session's uploads isolated in its own folder.
     path = Path(settings.upload_dir) / session_id
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def _sanitize_filename(filename: str) -> str:
-    """
-    Remove unsafe characters from the original filename.
-    We keep the name readable, but do not trust the raw browser-supplied value.
-    """
     if not filename:
         return "uploaded_file"
 
@@ -30,7 +28,6 @@ def _sanitize_filename(filename: str) -> str:
 
 
 def _validate_extension(filename: str) -> None:
-    # Only allow extensions configured in settings.
     ext = Path(filename).suffix.lower()
     if ext not in settings.allowed_extension_list:
         allowed = ", ".join(settings.allowed_extension_list)
@@ -41,10 +38,6 @@ def _validate_extension(filename: str) -> None:
 
 
 def _validate_content_length(content_length: int | None) -> None:
-    """
-    Pre-check upload size using Content-Length when the client provides it.
-    This is not perfect, but it catches many oversized uploads early.
-    """
     if content_length is None:
         return
 
@@ -57,22 +50,17 @@ def _validate_content_length(content_length: int | None) -> None:
 
 
 async def _save_upload_file(file: UploadFile, destination: Path) -> None:
-    """
-    Save the uploaded file in chunks instead of reading everything into memory.
-    This is safer for larger files.
-    """
     max_bytes = settings.max_upload_size_mb * 1024 * 1024
     total_written = 0
 
     with destination.open("wb") as buffer:
         while True:
-            chunk = await file.read(1024 * 1024)  # 1 MB chunks
+            chunk = await file.read(1024 * 1024)
             if not chunk:
                 break
 
             total_written += len(chunk)
             if total_written > max_bytes:
-                # Remove partial file if it exceeded the allowed limit
                 buffer.close()
                 destination.unlink(missing_ok=True)
                 raise HTTPException(
@@ -90,10 +78,6 @@ async def upload_document(
     file: UploadFile = File(...),
     content_length: int | None = Header(default=None),
 ):
-    """
-    Upload a file into a brand-new session.
-    The backend creates a session_id automatically and immediately ingests the file.
-    """
     try:
         _validate_content_length(content_length)
 
@@ -102,13 +86,14 @@ async def upload_document(
 
         session_id = uuid.uuid4().hex
         upload_dir = _session_dir(session_id)
-
-        # Use a generated prefix so files never overwrite each other
         file_path = upload_dir / f"{uuid.uuid4().hex}_{original_name}"
 
+        logger.info("Saving uploaded file: %s", file_path)
         await _save_upload_file(file, file_path)
 
+        logger.info("Starting ingestion for session=%s file=%s", session_id, file_path)
         result = ingest_document_file(str(file_path), session_id=session_id)
+        logger.info("Completed ingestion for session=%s", session_id)
 
         return {
             "session_id": session_id,
@@ -119,7 +104,8 @@ async def upload_document(
         raise
 
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(exc)}")
+        logger.exception("Upload failed for new session: %s", exc)
+        raise HTTPException(status_code=500, detail="Upload failed during ingestion.")
 
 
 @router.post("/sessions/{session_id}/upload")
@@ -128,10 +114,6 @@ async def upload_document_to_session(
     file: UploadFile = File(...),
     content_length: int | None = Header(default=None),
 ):
-    """
-    Upload a file into an existing session.
-    This is useful when the same chat/session should contain multiple documents.
-    """
     try:
         if not session_id.strip():
             raise HTTPException(status_code=400, detail="session_id is required")
@@ -144,9 +126,12 @@ async def upload_document_to_session(
         upload_dir = _session_dir(session_id)
         file_path = upload_dir / f"{uuid.uuid4().hex}_{original_name}"
 
+        logger.info("Saving uploaded file to existing session=%s file=%s", session_id, file_path)
         await _save_upload_file(file, file_path)
 
+        logger.info("Starting ingestion for existing session=%s file=%s", session_id, file_path)
         result = ingest_document_file(str(file_path), session_id=session_id)
+        logger.info("Completed ingestion for existing session=%s", session_id)
 
         return {
             "session_id": session_id,
@@ -157,4 +142,5 @@ async def upload_document_to_session(
         raise
 
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(exc)}")
+        logger.exception("Upload failed for existing session=%s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail="Upload failed during ingestion.")

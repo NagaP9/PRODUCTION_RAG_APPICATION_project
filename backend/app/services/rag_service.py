@@ -4,8 +4,8 @@ import logging
 import re
 
 from openai import OpenAI
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 
 from backend.app.core.config import settings
 
@@ -16,12 +16,14 @@ logger = logging.getLogger("lumen-backend")
 def get_embeddings() -> HuggingFaceEmbeddings:
     logger.info("Initializing embedding model: %s", settings.embedding_model_name)
     return HuggingFaceEmbeddings(
-        model_name=settings.embedding_model_name
+        model_name=settings.embedding_model_name,
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": False},
     )
 
 
 @lru_cache(maxsize=1)
-def get_vectorstore() -> Chroma:
+def get_vectorstore(embeddings: Optional[HuggingFaceEmbeddings] = None) -> Chroma:
     logger.info(
         "Initializing Chroma vectorstore: collection=%s persist_dir=%s",
         settings.chroma_collection_name,
@@ -30,7 +32,7 @@ def get_vectorstore() -> Chroma:
     return Chroma(
         collection_name=settings.chroma_collection_name,
         persist_directory=settings.chroma_persist_directory,
-        embedding_function=get_embeddings(),
+        embedding_function=embeddings or get_embeddings(),
     )
 
 
@@ -255,19 +257,14 @@ def _negative_signal_penalty(intent: str, metadata: Dict[str, Any], text: str) -
 
     if intent == "incident" and section not in {"incident_log", "incident_response", "security_incidents"}:
         return 6
-
     if intent == "security" and section not in {"security_notes", "contacts"}:
         return 5
-
     if intent == "office" and section not in {"office_locations", "faq"}:
         return 4
-
     if intent == "incident" and any(term in lowered for term in ["remote work", "laptop replacement", "termination", "internet stipend"]):
         return 4
-
     if intent == "security" and any(term in lowered for term in ["remote work", "holidays", "termination", "laptop replacement"]):
         return 4
-
     if intent == "office" and any(term in lowered for term in ["incident", "redacted_email", "redacted_phone", "redacted_number"]):
         return 4
 

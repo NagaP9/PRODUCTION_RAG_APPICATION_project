@@ -1,37 +1,38 @@
-import logging
-from pathlib import Path
-
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
-from backend.app.core.config import settings
-from backend.app.api.routes import query, ingest, health, upload
+from backend.app.api.routes.upload import router as upload_router
+from backend.app.api.routes.query import router as query_router
+from backend.app.services.rag_service import get_embeddings, get_vectorstore
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    embeddings = get_embeddings()
+    vectorstore = get_vectorstore(embeddings)
+
+    app.state.embeddings = embeddings
+    app.state.vectorstore = vectorstore
+
+    embeddings.embed_query("startup warmup")
+    yield
+
+
+app = FastAPI(
+    title="PDF RAG API",
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
-app = FastAPI(title=settings.app_name)
+app.include_router(upload_router)
+app.include_router(query_router)
 
 
 @app.get("/")
-def root():
-    return {"status": "ok", "message": "RAG backend is running"}
+async def root():
+    return {"message": "PDF RAG API is running"}
 
 
-Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
-Path(settings.chroma_persist_directory).mkdir(parents=True, exist_ok=True)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(health.router)
-app.include_router(query.router)
-app.include_router(upload.router)
-app.include_router(ingest.router)
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
