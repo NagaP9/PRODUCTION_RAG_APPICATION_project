@@ -1,9 +1,11 @@
 export type Role = "user" | "assistant";
 
+export type FileType = "pdf" | "docx" | "txt" | "md";
+
 export interface Source {
     id: string;
     fileName: string;
-    fileType: "pdf" | "docx" | "txt" | "md";
+    fileType: FileType;
     page: number;
     snippet: string;
     confidence: number;
@@ -21,11 +23,12 @@ export interface Message {
 export interface DocumentItem {
     id: string;
     name: string;
-    type: "pdf" | "docx" | "txt" | "md";
+    type: FileType;
     pages: number;
     sizeLabel: string;
     status: "indexed" | "indexing" | "failed";
     chunks: number;
+    documentId?: string;
 }
 
 export interface Conversation {
@@ -55,18 +58,33 @@ export interface UploadResult {
     path?: string;
     session_id: string;
     detail?: string;
+    document_id?: string;
+    file_path?: string;
+    file_hash?: string;
 }
 
 export interface UploadResponse {
-    message: string;
-    session_id: string;
+    message?: string;
+    session_id?: string;
     session_name?: string;
     result: UploadResult;
 }
 
+export interface QuerySourceMetadata {
+    file_name?: string;
+    source?: string;
+    filename?: string;
+    document_id?: string;
+    page?: number;
+    section?: string;
+    heading?: string;
+    score?: number;
+    session_name?: string;
+}
+
 export interface QueryApiSource {
     content: string;
-    metadata?: Record<string, any>;
+    metadata?: QuerySourceMetadata;
 }
 
 export interface QueryResponse {

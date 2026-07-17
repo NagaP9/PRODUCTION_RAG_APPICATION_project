@@ -91,6 +91,7 @@ export default function Page() {
   const messages = activeConv?.messages ?? [];
   const documents = activeConv?.documents ?? [];
   const isEmpty = messages.length === 0;
+  const activeDocument = documents[0];
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", isDark);
@@ -155,13 +156,14 @@ export default function Page() {
       const data = await queryRag({
         query: text,
         session_id: activeConv.sessionId,
+        document_id: activeDocument?.documentId,
       });
 
       const mappedSources: Source[] = (data.sources ?? []).map(
         (s: any, idx: number) => {
           const sourceFileName =
-            s.metadata?.source ??
             s.metadata?.file_name ??
+            s.metadata?.source ??
             s.metadata?.filename ??
             "unknown.pdf";
 
@@ -173,7 +175,7 @@ export default function Page() {
             snippet: s.content ?? "",
             confidence:
               typeof s.metadata?.score === "number" ? s.metadata.score : 0,
-            collection: s.metadata?.session_name ?? "Knowledge base files",
+            collection: s.metadata?.document_id ?? "Knowledge base files",
           };
         }
       );
@@ -273,6 +275,7 @@ export default function Page() {
           sizeLabel: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
           status: "indexed",
           chunks: response.result?.chunks ?? 0,
+          documentId: response.result?.document_id,
         });
       }
 

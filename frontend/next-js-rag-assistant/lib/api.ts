@@ -60,11 +60,13 @@ export async function uploadDocumentToSession(
 export async function queryRag(payload: {
     query: string;
     session_id: string;
+    document_id?: string;
     filters?: Record<string, any>;
 }): Promise<QueryResponse> {
     const body: Record<string, any> = {
         query: payload.query,
         session_id: payload.session_id,
+        document_id: payload.document_id,
     };
 
     if (payload.filters && Object.keys(payload.filters).length > 0) {
