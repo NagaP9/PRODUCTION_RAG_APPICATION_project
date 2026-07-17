@@ -229,7 +229,7 @@ def _exact_token_boost(query: str, text: str) -> int:
 
     for token in exact_tokens:
         if token.lower() in normalized_text:
-            boost += 8
+            boost += 18
 
     return boost
 
@@ -243,10 +243,10 @@ def _section_match_boost(intent: str, metadata: Dict[str, Any]) -> int:
     heading = str(metadata.get("heading", "")).lower()
 
     if section in preferred_sections:
-        return 6
+        return 10
 
     if any(pref.replace("_", " ") in heading for pref in preferred_sections):
-        return 3
+        return 4
 
     return 0
 
@@ -256,13 +256,13 @@ def _negative_signal_penalty(intent: str, metadata: Dict[str, Any], text: str) -
     section = str(metadata.get("section", "")).lower()
 
     if intent == "incident" and section not in {"incident_log", "incident_response", "security_incidents"}:
-        return 6
+        return 10
     if intent == "security" and section not in {"security_notes", "contacts"}:
         return 5
     if intent == "office" and section not in {"office_locations", "faq"}:
         return 4
     if intent == "incident" and any(term in lowered for term in ["remote work", "laptop replacement", "termination", "internet stipend"]):
-        return 4
+        return 6
     if intent == "security" and any(term in lowered for term in ["remote work", "holidays", "termination", "laptop replacement"]):
         return 4
     if intent == "office" and any(term in lowered for term in ["incident", "redacted_email", "redacted_phone", "redacted_number"]):
@@ -273,23 +273,23 @@ def _negative_signal_penalty(intent: str, metadata: Dict[str, Any], text: str) -
 
 def _score_to_confidence(raw_score: Optional[float], rank: int) -> float:
     if raw_score is None:
-        base = 0.55
+        base = 0.70
     else:
         score = float(raw_score)
         if score <= 0.10:
-            base = 0.96
+            base = 0.97
         elif score <= 0.20:
-            base = 0.90
+            base = 0.92
         elif score <= 0.35:
-            base = 0.82
+            base = 0.86
         elif score <= 0.50:
-            base = 0.72
+            base = 0.78
         elif score <= 0.75:
-            base = 0.60
+            base = 0.66
         else:
-            base = 0.46
+            base = 0.52
 
-    confidence = max(0.25, min(0.99, base - (rank * 0.05)))
+    confidence = max(0.25, min(0.99, base - (rank * 0.04)))
     return round(confidence, 2)
 
 
@@ -338,15 +338,59 @@ def _rerank_results(
 
 
 def _precision_top_k(intent: str) -> int:
-    if intent in {"incident", "security", "office"}:
+    if intent == "incident":
+        return 3
+    if intent in {"security", "office"}:
         return 2
     return settings.retrieval_top_k
 
 
 def _candidate_k(intent: str) -> int:
-    if intent in {"incident", "security", "office"}:
+    if intent == "incident":
+        return 12
+    if intent in {"security", "office"}:
         return 6
     return max(settings.retrieval_top_k * 3, 8)
+
+
+def _incident_where_document_clause(incident_id: str) -> Dict[str, str]:
+    return {"$contains": incident_id}
+
+
+def _direct_incident_content_matches(
+    incident_id: str,
+    session_id: Optional[str],
+    document_id: Optional[str],
+    filters: Optional[Dict[str, Any]],
+) -> List[Tuple[Any, float]]:
+    vectorstore = get_vectorstore()
+    base_filter = _build_metadata_filter(
+        session_id=session_id,
+        document_id=document_id,
+        filters=filters,
+    )
+    incident_filter = _build_section_filter(
+        session_id=session_id,
+        document_id=document_id,
+        sections=["incident_log", "incident_response", "security_incidents"],
+        filters=filters,
+    )
+
+    direct_results: List[Tuple[Any, float]] = []
+
+    for active_filter in [incident_filter, base_filter]:
+        try:
+            matches = vectorstore.similarity_search_with_score(
+                query=incident_id,
+                k=8,
+                filter=active_filter,
+                where_document=_incident_where_document_clause(incident_id),
+            )
+            direct_results.extend(matches)
+        except Exception as exc:
+            logger.warning("Direct incident content search failed for %s: %s", incident_id, exc)
+
+    return _dedupe_results(direct_results)
 
 
 def _retrieve_documents(
@@ -360,6 +404,20 @@ def _retrieve_documents(
     top_k = _precision_top_k(intent)
     candidate_k = _candidate_k(intent)
     preferred_sections = _intent_sections(intent)
+
+    incident_id = _query_incident_id(query)
+    if intent == "incident" and incident_id:
+        direct_matches = _direct_incident_content_matches(
+            incident_id=incident_id,
+            session_id=session_id,
+            document_id=document_id,
+            filters=filters,
+        )
+        if direct_matches:
+            reranked_direct = _rerank_results(query, intent, direct_matches)
+            best_direct = reranked_direct[:top_k]
+            if best_direct:
+                return best_direct
 
     section_filter = _build_section_filter(
         session_id=session_id,
@@ -420,18 +478,23 @@ def _contains_exact_token(text: str, token: str) -> bool:
 def _incident_docs_for_answer(query: str, docs: List[Any]) -> List[Any]:
     incident_id = _query_incident_id(query)
     if not incident_id:
-        return docs[:1]
+        return docs[:2]
 
     matching = []
     for doc in docs:
         content = _normalize_text(doc.page_content)
+        metadata = dict(doc.metadata or {})
+        section = str(metadata.get("section", "")).lower()
+
         if _contains_exact_token(content, incident_id):
+            matching.append(doc)
+        elif section in {"incident_log", "incident_response", "security_incidents"} and "incident" in content.lower():
             matching.append(doc)
 
     if matching:
-        return matching[:2]
+        return matching[:3]
 
-    return docs[:1]
+    return docs[:2]
 
 
 def _context_docs_for_answer(query: str, docs: List[Any]) -> List[Any]:
@@ -543,6 +606,7 @@ def _generate_answer(query: str, docs: List[Any]) -> str:
         style_instruction = (
             "Use exactly one sentence. "
             "State only the incident outcome or event details supported by the evidence. "
+            "Prefer the chunk that contains the exact incident ID. "
             "Do not mention source labels or quote raw snippets."
         )
     elif intent == "office":
@@ -653,8 +717,13 @@ def answer_question(
 
     avg_confidence = _average_confidence(results)
     docs = [doc for doc, _score in results]
+    intent = _infer_query_intent(cleaned_query)
 
-    if settings.enable_low_confidence_fallback and avg_confidence < settings.min_retrieval_confidence:
+    if (
+        settings.enable_low_confidence_fallback
+        and avg_confidence < settings.min_retrieval_confidence
+        and intent != "incident"
+    ):
         answer = (
             "I found some related content, but the retrieval confidence is too low "
             "to give a reliable answer from the uploaded content."
