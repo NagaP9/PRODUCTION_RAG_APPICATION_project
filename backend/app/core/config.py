@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     chroma_collection_name: str = "documents"
 
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_batch_size: int = 16
 
     upload_dir: str = "./uploads"
     max_upload_size_mb: int = 50
