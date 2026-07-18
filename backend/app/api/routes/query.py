@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from backend.app.schemas.query import QueryRequest, QueryResponse
 from backend.app.services.rag_service import answer_question
 
+
+logger = logging.getLogger("lumen-backend")
 
 router = APIRouter(prefix="/api", tags=["query"])
 
@@ -22,7 +26,19 @@ async def query_documents(payload: QueryRequest):
         return QueryResponse(**result)
 
     except ValueError as exc:
+        logger.exception(
+            "Query validation failed for session=%s document_id=%s query=%s",
+            payload.session_id,
+            payload.document_id,
+            payload.query,
+        )
         raise HTTPException(status_code=400, detail=str(exc))
 
     except Exception as exc:
+        logger.exception(
+            "Query failed for session=%s document_id=%s query=%s",
+            payload.session_id,
+            payload.document_id,
+            payload.query,
+        )
         raise HTTPException(status_code=500, detail=f"Query failed: {str(exc)}")
