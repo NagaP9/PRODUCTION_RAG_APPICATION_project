@@ -18,7 +18,10 @@ def get_embeddings() -> HuggingFaceEmbeddings:
     return HuggingFaceEmbeddings(
         model_name=settings.embedding_model_name,
         model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": False},
+        encode_kwargs={
+            "normalize_embeddings": False,
+            "batch_size": settings.embedding_batch_size,
+        },
     )
 
 

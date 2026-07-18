@@ -14,6 +14,10 @@ class Settings(BaseSettings):
         "sentence-transformers/all-MiniLM-L6-v2",
         alias="EMBEDDING_MODEL_NAME",
     )
+    embedding_batch_size: int = Field(
+        8,
+        alias="EMBEDDING_BATCH_SIZE",
+    )
 
     chroma_collection_name: str = Field(
         "rag_documents",

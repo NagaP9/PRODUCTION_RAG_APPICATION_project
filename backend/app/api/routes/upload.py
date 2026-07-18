@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from backend.app.core.config import settings
 from backend.app.services.ingest_service import ingest_document_file
@@ -79,6 +80,7 @@ async def upload_document(
     content_length: int | None = Header(default=None),
 ):
     try:
+        logger.info("Upload started")
         _validate_content_length(content_length)
 
         original_name = _sanitize_filename(file.filename or "uploaded_file")
@@ -92,7 +94,11 @@ async def upload_document(
         await _save_upload_file(file, file_path)
 
         logger.info("Starting ingestion for session=%s file=%s", session_id, file_path)
-        result = ingest_document_file(str(file_path), session_id=session_id)
+        result = await run_in_threadpool(
+            ingest_document_file,
+            str(file_path),
+            session_id,
+        )
         logger.info("Completed ingestion for session=%s", session_id)
 
         return {
@@ -118,6 +124,7 @@ async def upload_document_to_session(
         if not session_id.strip():
             raise HTTPException(status_code=400, detail="session_id is required")
 
+        logger.info("Upload started for existing session=%s", session_id)
         _validate_content_length(content_length)
 
         original_name = _sanitize_filename(file.filename or "uploaded_file")
@@ -130,7 +137,11 @@ async def upload_document_to_session(
         await _save_upload_file(file, file_path)
 
         logger.info("Starting ingestion for existing session=%s file=%s", session_id, file_path)
-        result = ingest_document_file(str(file_path), session_id=session_id)
+        result = await run_in_threadpool(
+            ingest_document_file,
+            str(file_path),
+            session_id,
+        )
         logger.info("Completed ingestion for existing session=%s", session_id)
 
         return {

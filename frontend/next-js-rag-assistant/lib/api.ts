@@ -4,6 +4,8 @@ const API_BASE_URL =
     process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
     "http://127.0.0.1:8000";
 
+console.log("API_BASE_URL:", API_BASE_URL);
+
 function buildApiUrl(path: string) {
     return `${API_BASE_URL}/api${path.startsWith("/") ? path : `/${path}`}`;
 }
