@@ -18,10 +18,7 @@ def get_embeddings() -> HuggingFaceEmbeddings:
     return HuggingFaceEmbeddings(
         model_name=settings.embedding_model_name,
         model_kwargs={"device": "cpu"},
-        encode_kwargs={
-            "normalize_embeddings": False,
-            "batch_size": settings.embedding_batch_size,
-        },
+        encode_kwargs={"normalize_embeddings": True},
     )
 
 
@@ -109,7 +106,6 @@ def _extract_exact_tokens(query: str) -> List[str]:
         normalized = token.strip()
         if normalized and normalized not in seen:
             seen.append(normalized)
-
     return seen
 
 
@@ -317,11 +313,7 @@ def _dedupe_results(results: List[Tuple[Any, float]]) -> List[Tuple[Any, float]]
     return deduped
 
 
-def _rerank_results(
-    query: str,
-    intent: str,
-    results: List[Tuple[Any, float]],
-) -> List[Tuple[Any, float]]:
+def _rerank_results(query: str, intent: str, results: List[Tuple[Any, float]]) -> List[Tuple[Any, float]]:
     rescored: List[Tuple[Any, float, int, float]] = []
 
     for doc, distance_score in results:
@@ -350,14 +342,10 @@ def _precision_top_k(intent: str) -> int:
 
 def _candidate_k(intent: str) -> int:
     if intent == "incident":
-        return 12
+        return max(settings.retrieval_candidate_k, 12)
     if intent in {"security", "office"}:
-        return 6
-    return max(settings.retrieval_top_k * 3, 8)
-
-
-def _incident_where_document_clause(incident_id: str) -> Dict[str, str]:
-    return {"$contains": incident_id}
+        return max(settings.retrieval_candidate_k // 2, 6)
+    return settings.retrieval_candidate_k
 
 
 def _direct_incident_content_matches(
@@ -367,33 +355,38 @@ def _direct_incident_content_matches(
     filters: Optional[Dict[str, Any]],
 ) -> List[Tuple[Any, float]]:
     vectorstore = get_vectorstore()
-    base_filter = _build_metadata_filter(
-        session_id=session_id,
-        document_id=document_id,
-        filters=filters,
-    )
-    incident_filter = _build_section_filter(
+
+    section_filter = _build_section_filter(
         session_id=session_id,
         document_id=document_id,
         sections=["incident_log", "incident_response", "security_incidents"],
         filters=filters,
     )
+    base_filter = _build_metadata_filter(
+        session_id=session_id,
+        document_id=document_id,
+        filters=filters,
+    )
 
     direct_results: List[Tuple[Any, float]] = []
 
-    for active_filter in [incident_filter, base_filter]:
+    for active_filter in [section_filter, base_filter]:
         try:
             matches = vectorstore.similarity_search_with_score(
                 query=incident_id,
                 k=8,
                 filter=active_filter,
-                where_document=_incident_where_document_clause(incident_id),
             )
             direct_results.extend(matches)
         except Exception as exc:
-            logger.warning("Direct incident content search failed for %s: %s", incident_id, exc)
+            logger.warning("Direct incident search failed for %s: %s", incident_id, exc)
 
-    return _dedupe_results(direct_results)
+    filtered = []
+    for doc, score in direct_results:
+        if incident_id.lower() in _normalize_text(doc.page_content).lower():
+            filtered.append((doc, score))
+
+    return _dedupe_results(filtered)
 
 
 def _retrieve_documents(
@@ -437,26 +430,32 @@ def _retrieve_documents(
     raw_results: List[Tuple[Any, float]] = []
 
     if section_filter:
-        raw_results = vectorstore.similarity_search_with_score(
-            query=query,
-            k=candidate_k,
-            filter=section_filter,
-        )
+        try:
+            raw_results = vectorstore.similarity_search_with_score(
+                query=query,
+                k=candidate_k,
+                filter=section_filter,
+            )
+        except Exception as exc:
+            logger.warning("Section-filtered retrieval failed: %s", exc)
 
     if len(raw_results) < top_k:
-        fallback_results = (
-            vectorstore.similarity_search_with_score(
-                query=query,
-                k=candidate_k,
-                filter=base_filter,
+        try:
+            fallback_results = (
+                vectorstore.similarity_search_with_score(
+                    query=query,
+                    k=candidate_k,
+                    filter=base_filter,
+                )
+                if base_filter
+                else vectorstore.similarity_search_with_score(
+                    query=query,
+                    k=candidate_k,
+                )
             )
-            if base_filter
-            else vectorstore.similarity_search_with_score(
-                query=query,
-                k=candidate_k,
-            )
-        )
-        raw_results.extend(fallback_results)
+            raw_results.extend(fallback_results)
+        except Exception as exc:
+            logger.warning("Fallback retrieval failed: %s", exc)
 
     raw_results = _dedupe_results(raw_results)
     reranked = _rerank_results(query, intent, raw_results)
@@ -474,40 +473,12 @@ def _average_confidence(results: List[Tuple[Any, float]]) -> float:
     return round(sum(values) / len(values), 2)
 
 
-def _contains_exact_token(text: str, token: str) -> bool:
-    return token.lower() in (text or "").lower()
-
-
-def _incident_docs_for_answer(query: str, docs: List[Any]) -> List[Any]:
-    incident_id = _query_incident_id(query)
-    if not incident_id:
-        return docs[:2]
-
-    matching = []
-    for doc in docs:
-        content = _normalize_text(doc.page_content)
-        metadata = dict(doc.metadata or {})
-        section = str(metadata.get("section", "")).lower()
-
-        if _contains_exact_token(content, incident_id):
-            matching.append(doc)
-        elif section in {"incident_log", "incident_response", "security_incidents"} and "incident" in content.lower():
-            matching.append(doc)
-
-    if matching:
-        return matching[:3]
-
-    return docs[:2]
-
-
 def _context_docs_for_answer(query: str, docs: List[Any]) -> List[Any]:
-    intent = _infer_query_intent(query)
-
-    if intent == "incident":
-        return _incident_docs_for_answer(query, docs)
-
-    if intent in {"security", "office"}:
-        return docs[:2]
+    incident_id = _query_incident_id(query)
+    if incident_id:
+        exact = [doc for doc in docs if incident_id.lower() in _normalize_text(doc.page_content).lower()]
+        if exact:
+            return exact[:3]
 
     return docs[: settings.max_context_chunks]
 
@@ -590,9 +561,8 @@ def _generate_answer(query: str, docs: List[Any]) -> str:
     if client is None:
         return "I found relevant document content, but no Groq API key is configured."
 
-    intent = _infer_query_intent(query)
-    filtered_docs = _context_docs_for_answer(query, docs)
-    context = _format_context(query, filtered_docs)
+    context_docs = _context_docs_for_answer(query, docs)
+    context = _format_context(query, context_docs)
 
     system_prompt = (
         "You are a concise document-grounded RAG assistant. "
@@ -605,15 +575,14 @@ def _generate_answer(query: str, docs: List[Any]) -> str:
         "For exact identifiers such as incident IDs, answer only if the same identifier appears clearly in the evidence."
     )
 
-    if intent == "incident":
+    incident_id = _query_incident_id(query)
+    if incident_id:
         style_instruction = (
             "Use exactly one sentence. "
-            "State only the incident outcome or event details supported by the evidence. "
-            "Prefer the chunk that contains the exact incident ID. "
-            "Do not mention source labels or quote raw snippets."
+            "State only the incident details supported by the evidence. "
+            "Prefer evidence that contains the exact incident ID. "
+            "Do not mention source labels or raw metadata."
         )
-    elif intent == "office":
-        style_instruction = "Use one short sentence."
     else:
         style_instruction = "Use 1 to 2 concise sentences."
 
@@ -629,7 +598,7 @@ Instructions:
 - {style_instruction}
 - Do not mention source numbers.
 - Do not explain retrieval.
-- Do not output any metadata fields.
+- Do not output metadata fields.
 - If the evidence does not clearly support the answer, say: I cannot answer reliably from the uploaded content.
 - Never guess beyond the evidence.
 """
@@ -646,21 +615,21 @@ Instructions:
         )
 
         answer = (response.choices[0].message.content or "").strip()
-        return _validated_answer_or_refusal(query, answer, filtered_docs)
+        return _validated_answer_or_refusal(query, answer, context_docs)
 
     except Exception as exc:
         logger.exception("Answer generation failed: %s", exc)
         return "I found relevant document content, but I could not generate a final answer at the moment."
 
 
-def _public_source_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+def _public_source_metadata(metadata: Dict[str, Any], raw_score: Optional[float], rank: int) -> Dict[str, Any]:
     return {
         "file_name": metadata.get("file_name"),
         "document_id": metadata.get("document_id"),
         "page": metadata.get("page"),
         "section": metadata.get("section"),
         "heading": metadata.get("heading"),
-        "score": metadata.get("score"),
+        "score": _score_to_confidence(raw_score, rank),
     }
 
 
@@ -669,12 +638,10 @@ def _build_sources(results: List[Tuple[Any, float]]) -> List[Dict[str, Any]]:
 
     for idx, (doc, raw_score) in enumerate(results):
         metadata = dict(doc.metadata or {})
-        metadata["score"] = _score_to_confidence(raw_score, idx)
-
         sources.append(
             {
                 "content": _shorten(_mask_sensitive_text(doc.page_content), limit=220),
-                "metadata": _public_source_metadata(metadata),
+                "metadata": _public_source_metadata(metadata, raw_score, idx),
             }
         )
 
