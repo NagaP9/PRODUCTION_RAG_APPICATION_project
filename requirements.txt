@@ -1,3 +1,5 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi
 uvicorn
 python-multipart
@@ -11,5 +13,7 @@ langchain-huggingface
 chromadb
 
 sentence-transformers
+torch==2.3.1+cpu
+
 pypdf
 docx2txt
