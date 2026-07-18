@@ -4,7 +4,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.api.routes.upload import router as upload_router
 from backend.app.api.routes.query import router as query_router
-from backend.app.services.rag_service import get_embeddings, get_vectorstore
 
 origins = [
     "http://localhost:3000",
@@ -13,13 +12,6 @@ origins = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    embeddings = get_embeddings()
-    vectorstore = get_vectorstore()
-
-    app.state.embeddings = embeddings
-    app.state.vectorstore = vectorstore
-
-    embeddings.embed_query("startup warmup")
     yield
 
 app = FastAPI(
